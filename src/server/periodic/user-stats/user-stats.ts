@@ -3,7 +3,10 @@ import { Worker } from 'worker_threads';
 import { USER_STATS_SAVE_INTERVAL_SEC } from '../../../constants';
 import {
   TIMELINE_BEFORE_GAME_START,
+  TIMELINE_CLOCK_MINUTE,
   TIMELINE_CLOCK_SECOND,
+  TIMELINE_SERVER_SHUTDOWN,
+  TIMELINE_RECOVERY_COMPLETE,
   USERS_WORKER_SAVE_STATS,
   USERS_WORKER_SAVE_STATS_RESPONSE,
 } from '../../../events';
@@ -23,7 +26,9 @@ export default class UserStatsPeriodic extends System {
     this.listeners = {
       [TIMELINE_BEFORE_GAME_START]: this.onBeforeGameStart,
       [TIMELINE_CLOCK_SECOND]: this.onSecondTick,
+      [TIMELINE_CLOCK_MINUTE]: this.onMinuteTick,
       [USERS_WORKER_SAVE_STATS_RESPONSE]: this.updateSavingStatus,
+      [TIMELINE_SERVER_SHUTDOWN] : this.stop,
     };
   }
 
@@ -55,6 +60,25 @@ export default class UserStatsPeriodic extends System {
 
       this.seconds = 0;
     }
+  }
+
+  onMinuteTick(): void {
+    this.saveRecoveryData();
+  }
+
+  stop(): void {
+    this.log.debug("saving all player stats. %s players", this.storage.playerList.size)
+
+    for (let [key, player] of this.storage.playerList) {
+      this.helpers.storePlayerStats(player)
+    }
+    // This probably isn't blocking
+    this.saveRecoveryData();
+    console.log('yerpyerp')
+
+    // This event must be emitted or the server will hang
+    this.events.emit(TIMELINE_RECOVERY_COMPLETE)
+
   }
 
   renameFile(path: string, reason: string): void {
@@ -120,6 +144,44 @@ export default class UserStatsPeriodic extends System {
         this.renameFile(this.config.accounts.userStats.path, 'error');
       }
     }
+  }
+
+  saveRecoveryData(): void {
+    // persist writes the recover data to disk
+    this.log.debug('persisting recovery stats to %s', this.config.cache.path)
+
+    // This cache is all the things that might need to be persistent between server restarts.
+    // Serializing typescript objects to JSON is apparently tricky so there's some loops in here
+    // that flip maps into objects. Those loops are reversed in the `restore` function to re-load 
+    // storage with data from the prior run.
+    //
+    // So there's probably a more efficient way to do this, potentially by building it into storage.
+    // The other missing piece here is CTF/BTR match info. This might entail pulling just the match 
+    // data from gameEntity.match, or we might need to grab leader info as well. 
+    //
+    let cache = {
+      players: {},
+      playerHistoryNameToIdList: {},
+      mobIdList: [],
+      nextMobId: -1,
+    }
+    for (let [key, value] of this.storage.playerRecoverList) {
+      cache['players'][key] = value
+    }
+    for (let [key, value] of this.storage.playerHistoryNameToIdList) {
+      cache['playerHistoryNameToIdList'][key] = value
+    }
+    cache['mobIdList'] = [...this.storage.mobIdList.values()]
+    cache['nextMobId'] = this.storage.nextMobId
+
+    let args: [FILE_FORMAT, any];
+    args = [
+      FILE_FORMAT.RECOVERY_STATE,
+      cache
+    ]
+    this.worker.postMessage({ event: USERS_WORKER_SAVE_STATS, args });
+    console.log('mgs after postmessage')
+
   }
 
   /**

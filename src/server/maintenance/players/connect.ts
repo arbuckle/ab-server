@@ -490,6 +490,12 @@ export default class GamePlayersConnect extends System {
       );
     }
 
+    // XXX
+    if (!mainConnection.isBot) {
+      player.upgrades.amount = 100
+    }
+
+
     /**
      * Welcome messages.
      */

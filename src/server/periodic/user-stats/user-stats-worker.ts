@@ -46,6 +46,12 @@ class UserAccountsWorker {
           stringify = stringifySyncState;
           path = this.config.sync.state.path;
           break;
+        case FILE_FORMAT.RECOVERY_STATE:
+          // no custom stringifier here.
+          // Avoiding a situation where changes to the modIdList or playerRecoverList in src/types breaks fastjson
+          stringify = JSON.stringify;
+          path = this.config.cache.path + '/recovery.json';
+          break;
         default:
           Log.error('Unknown format for stringify: %o', type);
           this.saveInProgress = false;
@@ -66,6 +72,7 @@ class UserAccountsWorker {
 
       if (resultStatus) {
         writeFile(path, json, err => {
+          console.log('written')
           if (err) {
             Log.error('Error while saving %s: %o', type, { error: err.stack });
             resultStatus = false;
